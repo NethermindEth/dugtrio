@@ -54,6 +54,8 @@ type ProxyConfig struct {
 	CallRateBurst   int           `yaml:"callRateBurst" envconfig:"PROXY_CALL_RATE_BURST"`
 	BlockedPathsStr string        `envconfig:"PROXY_BLOCKED_PATHS"`
 	BlockedPaths    []string      `yaml:"blockedPaths"`
+	RacePathsStr    string        `envconfig:"PROXY_RACE_PATHS"`
+	RacePaths       []string      `yaml:"racePaths"`
 	Auth            *AuthConfig   `yaml:"auth"`
 
 	// RebalanceInterval is how often to check for session imbalances (0 = disabled)
