@@ -98,6 +98,37 @@ func (pool *BeaconPool) GetReadyEndpoint(clientType ClientType, minCgc uint16) *
 	return selectedClient
 }
 
+func (pool *BeaconPool) GetReadyEndpoints(clientType ClientType, minCgc uint16) []*Client {
+	canonicalFork := pool.GetCanonicalFork()
+	if canonicalFork == nil {
+		return nil
+	}
+
+	readyClients := canonicalFork.ReadyClients
+	if len(readyClients) == 0 {
+		return nil
+	}
+
+	if clientType == UnspecifiedClient && minCgc == 0 {
+		result := make([]*Client, len(readyClients))
+		copy(result, readyClients)
+		return result
+	}
+
+	result := make([]*Client, 0, len(readyClients))
+	for _, client := range readyClients {
+		if clientType != UnspecifiedClient && client.clientType != clientType {
+			continue
+		}
+		if minCgc > 0 && client.GetCustodyGroupCount() < minCgc {
+			continue
+		}
+		result = append(result, client)
+	}
+
+	return result
+}
+
 func (pool *BeaconPool) IsClientReady(client *Client) bool {
 	if client == nil {
 		return false
