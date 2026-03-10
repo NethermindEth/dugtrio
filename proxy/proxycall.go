@@ -158,6 +158,8 @@ func (proxy *BeaconProxy) doUpstreamRequest(ctx context.Context, r *http.Request
 
 // writeProxyResponse writes upstream response headers and streams the body to w.
 func (proxy *BeaconProxy) writeProxyResponse(w http.ResponseWriter, r *http.Request, session *Session, resp *http.Response, endpoint *pool.Client, callCtx *proxyCallContext) (int64, error) {
+	// Close body on return. processCallContext may also close via streamReader when
+	// a timeout fires — double-close on http.Response.Body is safe (idempotent).
 	defer resp.Body.Close()
 
 	if callCtx.cancelled {

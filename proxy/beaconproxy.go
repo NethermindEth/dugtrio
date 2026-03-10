@@ -202,6 +202,9 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 	}
 
 	if proxy.checkRacePaths(r.URL) {
+		// Fan out to all ready endpoints regardless of minCgc; endpoints that
+		// cannot serve the request (e.g. insufficient custody groups) return
+		// non-2xx and are dropped by processRaceProxyCall.
 		if endpoints := proxy.pool.GetReadyEndpoints(clientType, 0); len(endpoints) > 0 {
 			session.requests.Add(1)
 
