@@ -120,7 +120,7 @@ func (proxy *BeaconProxy) doUpstreamRequest(ctx context.Context, r *http.Request
 		queryArgs = fmt.Sprintf("?%s", r.URL.RawQuery)
 	}
 
-	proxyURL, err := url.Parse(fmt.Sprintf("%s%s%s", endpointConfig.URL, r.URL.EscapedPath(), queryArgs))
+	proxyURL, err := url.Parse(fmt.Sprintf("%s%s%s", strings.TrimRight(endpointConfig.URL, "/"), r.URL.EscapedPath(), queryArgs))
 	if err != nil {
 		return nil, fmt.Errorf("error parsing proxy url: %w", err)
 	}
