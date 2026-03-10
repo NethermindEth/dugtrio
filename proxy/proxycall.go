@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -60,17 +61,40 @@ ctxLoop:
 }
 
 func (proxy *BeaconProxy) processProxyCall(w http.ResponseWriter, r *http.Request, session *Session, endpoint *pool.Client) error {
-	callContext := proxy.newProxyCallContext(r.Context(), proxy.config.CallTimeout)
-	contextID := session.addActiveContext(callContext.cancelFn)
+	callCtx := proxy.newProxyCallContext(r.Context(), proxy.config.CallTimeout)
+	contextID := session.addActiveContext(callCtx.cancelFn)
 
 	defer func() {
-		callContext.cancelFn()
+		callCtx.cancelFn()
 		session.removeActiveContext(contextID)
 	}()
 
+	var body []byte
+
+	if r.Body != nil {
+		var err error
+
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			return fmt.Errorf("failed to read request body: %w", err)
+		}
+	}
+
+	resp, err := proxy.doUpstreamRequest(callCtx.context, r, body, endpoint)
+	if err != nil {
+		return err
+	}
+
+	_, err = proxy.writeProxyResponse(w, r, session, resp, endpoint, callCtx)
+
+	return err
+}
+
+// doUpstreamRequest builds and dispatches an HTTP request to endpoint.
+// Takes context.Context directly so it works for both single-call and fan-out race paths.
+func (proxy *BeaconProxy) doUpstreamRequest(ctx context.Context, r *http.Request, body []byte, endpoint *pool.Client) (*http.Response, error) {
 	endpointConfig := endpoint.GetEndpointConfig()
 
-	// get filtered headers
 	hh := http.Header{}
 
 	for _, hk := range passthruRequestHeaderKeys {
@@ -84,14 +108,13 @@ func (proxy *BeaconProxy) processProxyCall(w http.ResponseWriter, r *http.Reques
 	}
 
 	proxyIPChain := []string{}
-	if forwaredFor := r.Header.Get("X-Forwarded-For"); forwaredFor != "" {
-		proxyIPChain = strings.Split(forwaredFor, ", ")
+	if forwardedFor := r.Header.Get("X-Forwarded-For"); forwardedFor != "" {
+		proxyIPChain = strings.Split(forwardedFor, ", ")
 	}
 
 	proxyIPChain = append(proxyIPChain, r.RemoteAddr)
 	hh.Set("X-Forwarded-For", strings.Join(proxyIPChain, ", "))
 
-	// build proxy url
 	queryArgs := ""
 	if r.URL.RawQuery != "" {
 		queryArgs = fmt.Sprintf("?%s", r.URL.RawQuery)
@@ -99,44 +122,53 @@ func (proxy *BeaconProxy) processProxyCall(w http.ResponseWriter, r *http.Reques
 
 	proxyURL, err := url.Parse(fmt.Sprintf("%s%s%s", endpointConfig.URL, r.URL.EscapedPath(), queryArgs))
 	if err != nil {
-		return fmt.Errorf("error parsing proxy url: %w", err)
+		return nil, fmt.Errorf("error parsing proxy url: %w", err)
 	}
 
-	// construct request to send to origin server
+	var bodyReader io.ReadCloser
+	if len(body) > 0 {
+		bodyReader = io.NopCloser(bytes.NewReader(body))
+	}
+
 	req := &http.Request{
 		Method:        r.Method,
 		URL:           proxyURL,
 		Header:        hh,
-		Body:          r.Body,
-		ContentLength: r.ContentLength,
+		Body:          bodyReader,
+		ContentLength: int64(len(body)),
 		Close:         r.Close,
 	}
+	req = req.WithContext(ctx)
+
 	start := time.Now()
+
 	client := &http.Client{Timeout: 0}
-	req = req.WithContext(callContext.context)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("proxy request error: %w", err)
+		return nil, fmt.Errorf("proxy request error: %w", err)
 	}
 
-	if callContext.cancelled {
-		resp.Body.Close()
-		return fmt.Errorf("proxy context cancelled")
-	}
-
-	callContext.streamReader = resp.Body
-
-	// add to stats
 	if proxy.proxyMetrics != nil {
-		callDuration := time.Since(start)
-		proxy.proxyMetrics.AddCall(endpoint.GetName(), fmt.Sprintf("%s%s", r.Method, r.URL.EscapedPath()), callDuration, resp.StatusCode)
+		proxy.proxyMetrics.AddCall(endpoint.GetName(), fmt.Sprintf("%s%s", r.Method, r.URL.EscapedPath()), time.Since(start), resp.StatusCode)
 	}
+
+	return resp, nil
+}
+
+// writeProxyResponse writes upstream response headers and streams the body to w.
+func (proxy *BeaconProxy) writeProxyResponse(w http.ResponseWriter, r *http.Request, session *Session, resp *http.Response, endpoint *pool.Client, callCtx *proxyCallContext) (int64, error) {
+	defer resp.Body.Close()
+
+	if callCtx.cancelled {
+		return 0, fmt.Errorf("proxy context cancelled before streaming")
+	}
+
+	callCtx.streamReader = resp.Body
 
 	respContentType := resp.Header.Get("Content-Type")
 	isEventStream := respContentType == "text/event-stream" || strings.HasPrefix(r.URL.EscapedPath(), "/eth/v1/events")
 
-	// passthru response headers
 	respH := w.Header()
 
 	for _, hk := range passthruResponseHeaderKeys {
@@ -161,31 +193,31 @@ func (proxy *BeaconProxy) processProxyCall(w http.ResponseWriter, r *http.Reques
 	var respLen int64
 
 	if isEventStream {
-		callContext.updateChan <- proxy.config.CallTimeout
+		callCtx.updateChan <- proxy.config.CallTimeout
 
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}
 
-		rspLen, err := proxy.processEventStreamResponse(callContext, w, resp.Body, session)
+		rspLen, err := proxy.processEventStreamResponse(callCtx, w, resp.Body, session)
 		if err != nil {
 			proxy.logger.Warnf("proxy event stream error: %v", err)
 		}
 
 		respLen = rspLen
 	} else {
-		// stream response body
 		rspLen, err := io.Copy(w, resp.Body)
 		if err != nil {
-			return fmt.Errorf("proxy response stream error: %w", err)
+			return respLen, fmt.Errorf("proxy response stream error: %w", err)
 		}
 
 		respLen = rspLen
 	}
 
-	proxy.logger.Debugf("proxied %v %v call (ip: %v, status: %v, length: %v, endpoint: %v)", r.Method, r.URL.EscapedPath(), session.GetIPAddr(), resp.StatusCode, respLen, endpoint.GetName())
+	proxy.logger.Debugf("proxied %v %v call (ip: %v, status: %v, length: %v, endpoint: %v)",
+		r.Method, r.URL.EscapedPath(), session.GetIPAddr(), resp.StatusCode, respLen, endpoint.GetName())
 
-	return nil
+	return respLen, nil
 }
 
 func (proxy *BeaconProxy) processEventStreamResponse(callContext *proxyCallContext, w http.ResponseWriter, r io.ReadCloser, session *Session) (int64, error) {
