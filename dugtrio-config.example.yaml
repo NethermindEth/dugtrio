@@ -47,6 +47,10 @@ proxy:
   # call rate burst limit
   callRateBurst: 1000
 
+  # api paths to race across all endpoints (regex patterns)
+  racePaths:
+    - "^/eth/v1/beacon/blobs/.*"
+
   # blocked api paths (regex patterns)
   blockedPaths:
     - ^/eth/v[0-9]+/debug/.*
