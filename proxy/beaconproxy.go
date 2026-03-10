@@ -59,6 +59,7 @@ type BeaconProxy struct {
 	proxyMetrics *metrics.ProxyMetrics
 	logger       *logrus.Entry
 	blockedPaths []*regexp.Regexp
+	racePaths    []*regexp.Regexp
 
 	sessionMutex sync.Mutex
 	sessions     map[string]*Session
@@ -71,6 +72,7 @@ func NewBeaconProxy(config *types.ProxyConfig, beaconPool *pool.BeaconPool, prox
 		proxyMetrics: proxyMetrics,
 		logger:       logrus.WithField("module", "proxy"),
 		blockedPaths: []*regexp.Regexp{},
+		racePaths:    []*regexp.Regexp{},
 		sessions:     map[string]*Session{},
 	}
 
@@ -94,6 +96,28 @@ func NewBeaconProxy(config *types.ProxyConfig, beaconPool *pool.BeaconPool, prox
 		}
 
 		proxy.blockedPaths = append(proxy.blockedPaths, blockedPathPattern)
+	}
+
+	racePaths := []string{}
+	racePaths = append(racePaths, config.RacePaths...)
+
+	for _, racePath := range strings.Split(config.RacePathsStr, ",") {
+		racePath = strings.Trim(racePath, " ")
+		if racePath == "" {
+			continue
+		}
+
+		racePaths = append(racePaths, racePath)
+	}
+
+	for _, racePath := range racePaths {
+		racePathPattern, err := regexp.Compile(racePath)
+		if err != nil {
+			proxy.logger.Errorf("error parsing race path pattern '%v': %v", racePath, err)
+			continue
+		}
+
+		proxy.racePaths = append(proxy.racePaths, racePathPattern)
 	}
 
 	if config.CallTimeout == 0 {
@@ -177,6 +201,31 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 		return
 	}
 
+	if proxy.checkRacePaths(r.URL) {
+		if endpoints := proxy.pool.GetReadyEndpoints(clientType, 0); len(endpoints) > 0 {
+			session.requests.Add(1)
+
+			err := proxy.processRaceProxyCall(w, r, session, endpoints)
+			if err != nil {
+				w.Header().Set("Content-Type", "text/html")
+				w.WriteHeader(http.StatusInternalServerError)
+
+				proxy.logger.WithFields(logrus.Fields{
+					"method": r.Method,
+					"url":    utils.GetRedactedURL(r.URL.String()),
+				}).Warnf("race proxy error: %v", err)
+
+				_, err = w.Write([]byte("Internal Server Error"))
+				if err != nil {
+					proxy.logger.Warnf("error writing race error response: %v", err)
+				}
+			}
+
+			return
+		}
+		// No ready endpoints in pool — fall through to normal routing.
+	}
+
 	endpoint, err := proxy.getEndpointForCall(r, session, clientType)
 	if err != nil {
 		w.Header().Set("Content-Type", "text/html")
@@ -226,6 +275,16 @@ func (proxy *BeaconProxy) checkBlockedPaths(reqURL *url.URL) bool {
 	for _, blockedPathPattern := range proxy.blockedPaths {
 		match := blockedPathPattern.MatchString(reqURL.EscapedPath())
 		if match {
+			return true
+		}
+	}
+
+	return false
+}
+
+func (proxy *BeaconProxy) checkRacePaths(reqURL *url.URL) bool {
+	for _, pattern := range proxy.racePaths {
+		if pattern.MatchString(reqURL.EscapedPath()) {
 			return true
 		}
 	}
