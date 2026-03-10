@@ -59,7 +59,7 @@ type BeaconProxy struct {
 	proxyMetrics *metrics.ProxyMetrics
 	logger       *logrus.Entry
 	blockedPaths []*regexp.Regexp
-	racePaths    []*regexp.Regexp
+	fanoutPaths  []*regexp.Regexp
 
 	sessionMutex sync.Mutex
 	sessions     map[string]*Session
@@ -72,7 +72,7 @@ func NewBeaconProxy(config *types.ProxyConfig, beaconPool *pool.BeaconPool, prox
 		proxyMetrics: proxyMetrics,
 		logger:       logrus.WithField("module", "proxy"),
 		blockedPaths: []*regexp.Regexp{},
-		racePaths:    []*regexp.Regexp{},
+		fanoutPaths:  []*regexp.Regexp{},
 		sessions:     map[string]*Session{},
 	}
 
@@ -98,26 +98,26 @@ func NewBeaconProxy(config *types.ProxyConfig, beaconPool *pool.BeaconPool, prox
 		proxy.blockedPaths = append(proxy.blockedPaths, blockedPathPattern)
 	}
 
-	racePaths := []string{}
-	racePaths = append(racePaths, config.RacePaths...)
+	fanoutPaths := []string{}
+	fanoutPaths = append(fanoutPaths, config.FanoutPaths...)
 
-	for _, racePath := range strings.Split(config.RacePathsStr, ",") {
-		racePath = strings.Trim(racePath, " ")
-		if racePath == "" {
+	for _, fanoutPath := range strings.Split(config.FanoutPathsStr, ",") {
+		fanoutPath = strings.Trim(fanoutPath, " ")
+		if fanoutPath == "" {
 			continue
 		}
 
-		racePaths = append(racePaths, racePath)
+		fanoutPaths = append(fanoutPaths, fanoutPath)
 	}
 
-	for _, racePath := range racePaths {
-		racePathPattern, err := regexp.Compile(racePath)
+	for _, fanoutPath := range fanoutPaths {
+		fanoutPathPattern, err := regexp.Compile(fanoutPath)
 		if err != nil {
-			proxy.logger.Errorf("error parsing race path pattern '%v': %v", racePath, err)
+			proxy.logger.Errorf("error parsing fanout path pattern '%v': %v", fanoutPath, err)
 			continue
 		}
 
-		proxy.racePaths = append(proxy.racePaths, racePathPattern)
+		proxy.fanoutPaths = append(proxy.fanoutPaths, fanoutPathPattern)
 	}
 
 	if config.CallTimeout == 0 {
@@ -201,7 +201,7 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 		return
 	}
 
-	if proxy.checkRacePaths(r.URL) {
+	if proxy.checkFanoutPaths(r.URL) {
 		// Fan out to all ready endpoints regardless of minCgc; endpoints that
 		// cannot serve the request (e.g. insufficient custody groups) return
 		// non-2xx and are dropped by processRaceProxyCall.
@@ -216,11 +216,11 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 				proxy.logger.WithFields(logrus.Fields{
 					"method": r.Method,
 					"url":    utils.GetRedactedURL(r.URL.String()),
-				}).Warnf("race proxy error: %v", err)
+				}).Warnf("fanout proxy error: %v", err)
 
 				_, err = w.Write([]byte("Internal Server Error"))
 				if err != nil {
-					proxy.logger.Warnf("error writing race error response: %v", err)
+					proxy.logger.Warnf("error writing fanout error response: %v", err)
 				}
 			}
 
@@ -285,8 +285,8 @@ func (proxy *BeaconProxy) checkBlockedPaths(reqURL *url.URL) bool {
 	return false
 }
 
-func (proxy *BeaconProxy) checkRacePaths(reqURL *url.URL) bool {
-	for _, pattern := range proxy.racePaths {
+func (proxy *BeaconProxy) checkFanoutPaths(reqURL *url.URL) bool {
+	for _, pattern := range proxy.fanoutPaths {
 		if pattern.MatchString(reqURL.EscapedPath()) {
 			return true
 		}

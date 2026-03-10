@@ -47,9 +47,13 @@ proxy:
   # call rate burst limit
   callRateBurst: 1000
 
-  # api paths to race across all endpoints (regex patterns)
-  racePaths:
+  # api paths to fan out across all endpoints simultaneously (regex patterns)
+  # first 2xx response wins; useful for latency-sensitive or HA beacon calls
+  fanoutPaths:
+    - "^/eth/v1/beacon/genesis$"
+    - "^/eth/v1/beacon/headers/.*"
     - "^/eth/v1/beacon/blobs/.*"
+    - "^/eth/v1/validator/duties/proposer/.*"
 
   # blocked api paths (regex patterns)
   blockedPaths:
