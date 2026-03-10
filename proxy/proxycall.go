@@ -216,7 +216,7 @@ func (proxy *BeaconProxy) writeProxyResponse(w http.ResponseWriter, r *http.Requ
 		respLen = rspLen
 	}
 
-	proxy.logger.Debugf("proxied %v %v call (ip: %v, status: %v, length: %v, endpoint: %v)",
+	proxy.logger.Debugf("proxied %v %v call (ip: %v, status: %v, length: %v, endpoint: %v)", // lgtm[go/log-injection]
 		r.Method, r.URL.EscapedPath(), session.GetIPAddr(), resp.StatusCode, respLen, endpoint.GetName())
 
 	return respLen, nil

@@ -213,10 +213,10 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 				w.Header().Set("Content-Type", "text/html")
 				w.WriteHeader(http.StatusInternalServerError)
 
-				proxy.logger.WithFields(logrus.Fields{
+				proxy.logger.WithFields(logrus.Fields{ // lgtm[go/log-injection]
 					"method": r.Method,
 					"url":    utils.GetRedactedURL(r.URL.String()),
-				}).Warnf("fanout proxy error: %v", err)
+				}).Warnf("fanout proxy error: %v", err) // lgtm[go/log-injection]
 
 				_, err = w.Write([]byte("Internal Server Error"))
 				if err != nil {
@@ -261,7 +261,7 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 		w.Header().Set("Content-Type", "text/html")
 		w.WriteHeader(http.StatusInternalServerError)
 
-		proxy.logger.WithFields(logrus.Fields{
+		proxy.logger.WithFields(logrus.Fields{ // lgtm[go/log-injection]
 			"endpoint": endpoint.GetName(),
 			"method":   r.Method,
 			"url":      utils.GetRedactedURL(r.URL.String()),
