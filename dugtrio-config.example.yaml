@@ -38,8 +38,8 @@ proxy:
   # proxy session timeout
   sessionTimeout: 10m
 
-  # reuse the same endpoint when possible
-  stickyEndpoint: true
+  # reuse the same endpoint when possible (not applicable when fanoutPaths covers all requests)
+  stickyEndpoint: false
 
   # call rate limit (calls per second)
   callRateLimit: 100
@@ -49,11 +49,9 @@ proxy:
 
   # api paths to fan out across all endpoints simultaneously (regex patterns)
   # first 2xx response wins; useful for latency-sensitive or HA beacon calls
+  # use ".*" to fan out all requests (ignores schedulerMode for matched paths)
   fanoutPaths:
-    - "^/eth/v1/beacon/genesis$"
-    - "^/eth/v1/beacon/headers/.*"
-    - "^/eth/v1/beacon/blobs/.*"
-    - "^/eth/v1/validator/duties/proposer/.*"
+    - ".*"
 
   # blocked api paths (regex patterns)
   blockedPaths:
