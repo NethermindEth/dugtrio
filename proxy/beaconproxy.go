@@ -216,7 +216,7 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 				proxy.logger.WithFields(logrus.Fields{
 					"method": utils.SanitizeLogParam(r.Method),
 					"url":    utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
-				}).Warnf("fanout proxy error: %v", err)
+				}).Warnf("fanout proxy error: %v", utils.SanitizeLogParam(err.Error()))
 
 				_, err = w.Write([]byte("Internal Server Error"))
 				if err != nil {
