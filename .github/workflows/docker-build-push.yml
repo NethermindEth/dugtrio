@@ -2,7 +2,7 @@ name: Docker Build and Push
 
 on:
   push:
-    branches: [feat/race-scheduler]
+    branches: [master, feat/race-scheduler]
   workflow_dispatch:
 
 permissions:
