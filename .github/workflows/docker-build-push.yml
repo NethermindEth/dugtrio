@@ -19,3 +19,4 @@ jobs:
       context: "."
       dockerfile_path: "./Dockerfile"
       run_trivy: false
+      platforms: "linux/amd64"
