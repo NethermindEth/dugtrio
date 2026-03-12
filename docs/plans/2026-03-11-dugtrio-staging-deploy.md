@@ -149,6 +149,21 @@ git checkout -b chore/dugtrio-ovh-staging-rpc-gateway
 
 ## Task 5: Add dugtrio kustomization and values
 
+**Upstream endpoints:**
+- **beacon-1** (primary): `http://l1-stack-hoodi-execution-beacon-fallback-haproxy:5052` — internal HAProxy in `angkor-rpc-gateway`, routes to the local Hoodi lighthouse node with its own QN fallback.
+- **beacon-2** (secondary): QuickNode Hoodi beacon URL from the existing `l1-stack-hoodi-secrets` K8s secret (key: `FALLBACK_BEACON_URL`), synced from Infisical path `/apps/rpc-gateway/l1-stack-hoodi`.
+
+**Prerequisite — env var expansion in dugtrio config (dugtrio PR):**
+
+dugtrio does not expand env vars in its YAML config by default. Add `os.ExpandEnv` in `utils/config.go` before YAML decode so `$VAR` refs in the config file are resolved at startup:
+
+```go
+// in readConfigFile, after os.ReadFile:
+content = []byte(os.ExpandEnv(string(content)))
+```
+
+This allows `url: "$QUICKNODE_HOODI_BEACON_URL"` in the config to be resolved from the pod's env.
+
 **Files:**
 - Create: `ovh/clusters/apps-staging-1/angkor-rpc-gateway/dugtrio/kustomization.yaml`
 - Create: `ovh/clusters/apps-staging-1/angkor-rpc-gateway/dugtrio/values.yaml`
@@ -178,9 +193,7 @@ helmCharts:
 
 **Step 3: Create values.yaml**
 
-Fill in beacon endpoint URLs for OVH staging before committing.
-`<BEACON_ENDPOINT_N_URL>` placeholders must be replaced with actual service URLs
-(e.g. `http://l1-stack-hoodi-execution-beacon-svc.angkor-rpc-gateway:5052/`).
+The QN URL is injected via `extraEnv` from the existing `l1-stack-hoodi-secrets` secret and expanded in the config via `os.ExpandEnv` (see prerequisite above).
 
 ```yaml
 image:
@@ -188,7 +201,14 @@ image:
   tag: "REPLACE_WITH_TAG_FROM_GHA"
   pullPolicy: Always
 imagePullSecrets:
-  - name: artifactory-secret
+  - name: artifactory-secret-angkor
+
+extraEnv:
+  - name: QUICKNODE_HOODI_BEACON_URL
+    valueFrom:
+      secretKeyRef:
+        name: l1-stack-hoodi-secrets
+        key: FALLBACK_BEACON_URL
 
 config: |
   logging:
@@ -197,10 +217,10 @@ config: |
     host: "0.0.0.0"
     port: "8080"
   endpoints:
-    - name: beacon-1
-      url: "<BEACON_ENDPOINT_1_URL>"
-    - name: beacon-2
-      url: "<BEACON_ENDPOINT_2_URL>"
+    - name: local-hoodi-beacon
+      url: "http://l1-stack-hoodi-execution-beacon-fallback-haproxy:5052"
+    - name: quicknode-hoodi-beacon
+      url: "$QUICKNODE_HOODI_BEACON_URL"
   pool:
     schedulerMode: "rr"
     followDistance: 10
@@ -232,9 +252,8 @@ service:
 **Step 4: Replace the image tag placeholder**
 
 ```bash
-# Substitute the actual tag from the GHA run in Task 2 Step 4
 IMAGE_TAG=<tag from GHA output>
-sed -i "s/REPLACE_WITH_TAG_FROM_GHA/${IMAGE_TAG}/" \
+gsed -i "s/REPLACE_WITH_TAG_FROM_GHA/${IMAGE_TAG}/" \
   ~/argocd/ovh/clusters/apps-staging-1/angkor-rpc-gateway/dugtrio/values.yaml
 ```
 
