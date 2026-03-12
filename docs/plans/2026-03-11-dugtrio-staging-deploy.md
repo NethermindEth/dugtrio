@@ -18,7 +18,7 @@
 **Step 1: Run full test suite with race detector**
 
 ```bash
-cd /Users/mvasylenko.nm/Documents/NethermindETH/surge/dugtrio
+cd .
 go test -race ./...
 ```
 
@@ -68,7 +68,7 @@ jobs:
 **Step 2: Commit the workflow file**
 
 ```bash
-cd /Users/mvasylenko.nm/Documents/NethermindETH/surge/dugtrio
+cd .
 git add .github/workflows/docker-build-push.yml
 git commit -m "chore(dugtrio): add GHA docker build/push workflow for staging"
 ```
@@ -100,7 +100,7 @@ Note the exact image tag from the GHA run output — it will be used in Task 5.
 **Step 1: Verify branch is up to date**
 
 ```bash
-cd /Users/mvasylenko.nm/Documents/NethermindETH/surge/dugtrio
+cd .
 git status
 git log --oneline master..HEAD
 ```
@@ -132,7 +132,7 @@ Expected: PR URL printed. Note it for reference.
 **Step 1: Switch to argocd repo and sync main**
 
 ```bash
-cd /Users/mvasylenko.nm/Documents/NethermindETH/argocd
+cd ~/argocd
 git checkout main
 git pull origin main
 ```
@@ -156,7 +156,7 @@ git checkout -b chore/dugtrio-ovh-staging-rpc-gateway
 **Step 1: Create the directory**
 
 ```bash
-mkdir -p /Users/mvasylenko.nm/Documents/NethermindETH/argocd/ovh/clusters/apps-staging-1/angkor-rpc-gateway/dugtrio
+mkdir -p ~/argocd/ovh/clusters/apps-staging-1/angkor-rpc-gateway/dugtrio
 ```
 
 **Step 2: Create kustomization.yaml**
@@ -235,13 +235,13 @@ service:
 # Substitute the actual tag from the GHA run in Task 2 Step 4
 IMAGE_TAG=<tag from GHA output>
 sed -i "s/REPLACE_WITH_TAG_FROM_GHA/${IMAGE_TAG}/" \
-  /Users/mvasylenko.nm/Documents/NethermindETH/argocd/ovh/clusters/apps-staging-1/angkor-rpc-gateway/dugtrio/values.yaml
+  ~/argocd/ovh/clusters/apps-staging-1/angkor-rpc-gateway/dugtrio/values.yaml
 ```
 
 **Step 5: Verify kustomize renders cleanly**
 
 ```bash
-cd /Users/mvasylenko.nm/Documents/NethermindETH/argocd
+cd ~/argocd
 kubectl kustomize \
   ovh/clusters/apps-staging-1/angkor-rpc-gateway/dugtrio \
   --enable-helm
@@ -256,7 +256,7 @@ Expected: rendered Kubernetes manifests printed (StatefulSet, ConfigMap, Service
 **Step 1: Commit the deployment files**
 
 ```bash
-cd /Users/mvasylenko.nm/Documents/NethermindETH/argocd
+cd ~/argocd
 git add ovh/clusters/apps-staging-1/angkor-rpc-gateway/dugtrio/
 git commit -m "chore(dugtrio): deploy fanout scheduler to OVH staging rpc-gateway"
 ```
