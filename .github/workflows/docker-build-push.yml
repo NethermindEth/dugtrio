@@ -1,0 +1,21 @@
+name: Docker Build and Push
+
+on:
+  push:
+    branches: [feat/race-scheduler]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  attestations: write
+  contents: read
+
+jobs:
+  build:
+    uses: NethermindEth/github-workflows/.github/workflows/docker-build-push-jfrog.yaml@main
+    with:
+      repo_name: "angkor-oci-local-staging"
+      image_name: "dugtrio"
+      context: "."
+      dockerfile_path: "./Dockerfile"
+      run_trivy: false
