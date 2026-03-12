@@ -286,6 +286,7 @@ func logErrorInfo(err error, callerSkip int, additionalInfos ...map[string]inter
 func SanitizeLogParam(s string) string {
 	s = strings.ReplaceAll(s, "\n", "")
 	s = strings.ReplaceAll(s, "\r", "")
+
 	return s
 }
 

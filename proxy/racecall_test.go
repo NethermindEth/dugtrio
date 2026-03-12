@@ -98,7 +98,7 @@ func TestRaceProxyCall_FastestWins(t *testing.T) {
 	clients := newTestClients(t, []*httptest.Server{slow, fast})
 	session := newTestSession()
 
-	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", nil)
+	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", http.NoBody)
 	w := httptest.NewRecorder()
 
 	err := proxy.processRaceProxyCall(w, req, session, clients)
@@ -128,7 +128,7 @@ func TestRaceProxyCall_AllFail(t *testing.T) {
 	clients := newTestClients(t, []*httptest.Server{ep0, ep1})
 	session := newTestSession()
 
-	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", nil)
+	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", http.NoBody)
 	w := httptest.NewRecorder()
 
 	err := proxy.processRaceProxyCall(w, req, session, clients)
@@ -152,7 +152,7 @@ func TestRaceProxyCall_OneFailsOneSucceeds(t *testing.T) {
 	clients := newTestClients(t, []*httptest.Server{ep0, ep1})
 	session := newTestSession()
 
-	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", nil)
+	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", http.NoBody)
 	w := httptest.NewRecorder()
 
 	err := proxy.processRaceProxyCall(w, req, session, clients)
@@ -173,7 +173,7 @@ func TestRaceProxyCall_SingleEndpointFallthrough(t *testing.T) {
 	clients := newTestClients(t, []*httptest.Server{ep0})
 	session := newTestSession()
 
-	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", nil)
+	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", http.NoBody)
 	w := httptest.NewRecorder()
 
 	err := proxy.processRaceProxyCall(w, req, session, clients)
@@ -187,7 +187,7 @@ func TestRaceProxyCall_NoEndpoints(t *testing.T) {
 	proxy := newTestProxy(t)
 	session := newTestSession()
 
-	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", nil)
+	req := httptest.NewRequest(http.MethodGet, "/eth/v1/beacon/blobs/12345", http.NoBody)
 	w := httptest.NewRecorder()
 
 	err := proxy.processRaceProxyCall(w, req, session, []*pool.Client{})

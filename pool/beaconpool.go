@@ -112,6 +112,7 @@ func (pool *BeaconPool) GetReadyEndpoints(clientType ClientType, minCgc uint16) 
 	if clientType == UnspecifiedClient && minCgc == 0 {
 		result := make([]*Client, len(readyClients))
 		copy(result, readyClients)
+
 		return result
 	}
 
@@ -120,9 +121,11 @@ func (pool *BeaconPool) GetReadyEndpoints(clientType ClientType, minCgc uint16) 
 		if clientType != UnspecifiedClient && client.clientType != clientType {
 			continue
 		}
+
 		if minCgc > 0 && client.GetCustodyGroupCount() < minCgc {
 			continue
 		}
+
 		result = append(result, client)
 	}
 

@@ -10,12 +10,14 @@ import (
 
 func newTestPool(t *testing.T) *BeaconPool {
 	t.Helper()
+
 	p, err := NewBeaconPool(&types.PoolConfig{
 		FollowDistance:  10,
 		MaxHeadDistance: 100,
 		SchedulerMode:   "rr",
 	})
 	require.NoError(t, err)
+
 	return p
 }
 
