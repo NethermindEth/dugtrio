@@ -150,7 +150,7 @@ git checkout -b chore/dugtrio-ovh-staging-rpc-gateway
 ## Task 5: Add dugtrio kustomization and values
 
 **Upstream endpoints:**
-- **beacon-1** (primary): `http://l1-stack-hoodi-execution-beacon-fallback-haproxy:5052` — internal HAProxy in `angkor-rpc-gateway`, routes to the local Hoodi lighthouse node with its own QN fallback.
+- **beacon-1** (primary): `http://l1-stack-hoodi-execution-beacon-fallback-0.l1-stack-hoodi-execution-beacon-fallback:5052` — direct beacon API on the Hoodi lighthouse pod (headless service, bypasses HAProxy).
 - **beacon-2** (secondary): QuickNode Hoodi beacon URL from the existing `l1-stack-hoodi-secrets` K8s secret (key: `FALLBACK_BEACON_URL`), synced from Infisical path `/apps/rpc-gateway/l1-stack-hoodi`.
 
 **Prerequisite — env var expansion in dugtrio config (dugtrio PR):**
@@ -218,7 +218,7 @@ config: |
     port: "8080"
   endpoints:
     - name: local-hoodi-beacon
-      url: "http://l1-stack-hoodi-execution-beacon-fallback-haproxy:5052"
+      url: "http://l1-stack-hoodi-execution-beacon-fallback-0.l1-stack-hoodi-execution-beacon-fallback:5052"
     - name: quicknode-hoodi-beacon
       url: "$QUICKNODE_HOODI_BEACON_URL"
   pool:
