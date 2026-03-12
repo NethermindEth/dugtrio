@@ -1,0 +1,135 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: beacon-perf-test
+  namespace: angkor-rpc-gateway
+data:
+  test.sh: |
+    #!/bin/bash
+    BASE_URL="${BASE_URL:-http://dugtrio:8080}"
+    SCAN_SLOTS="${SCAN_SLOTS:-10}"
+    CALLS="${CALLS:-30}"
+
+    echo "Testing: $BASE_URL"
+
+    HEAD=$(curl -s "$BASE_URL/eth/v1/beacon/headers/head" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['header']['message']['slot'])")
+    echo "Head slot: $HEAD — scanning last $SCAN_SLOTS slots for most blobs..."
+
+    TMPDIR_SCAN=$(mktemp -d)
+    touch "$TMPDIR_SCAN/done.log"
+    for i in $(seq 1 $SCAN_SLOTS); do
+        S=$((HEAD - i))
+        (curl -s "$BASE_URL/eth/v1/beacon/blobs/$S" -o "$TMPDIR_SCAN/$S.json"; echo "$S" >> "$TMPDIR_SCAN/done.log") &
+    done
+
+    while [ "$(wc -l < "$TMPDIR_SCAN/done.log" 2>/dev/null || echo 0)" -lt "$SCAN_SLOTS" ]; do
+        sleep 0.5
+    done
+    wait
+
+    BEST_SLOT=""
+    BEST_COUNT=0
+    for f in "$TMPDIR_SCAN"/*.json; do
+        COUNT=$(python3 -c "import sys,json; d=json.load(open('$f')); print(len(d.get('data',[])))" 2>/dev/null || echo 0)
+        S=$(basename "$f" .json)
+        if [ "$COUNT" -gt "$BEST_COUNT" ]; then BEST_COUNT=$COUNT; BEST_SLOT=$S; fi
+    done
+    rm -rf "$TMPDIR_SCAN"
+
+    if [ "$BEST_COUNT" -eq 0 ]; then echo "No blobs found in last $SCAN_SLOTS slots." >&2; exit 1; fi
+    SLOT=$BEST_SLOT
+    echo "Using slot $SLOT (head=$HEAD, blobs=$BEST_COUNT)"
+
+    VHASH_FILE=$(mktemp)
+    curl -s "$BASE_URL/eth/v1/beacon/blob_sidecars/$SLOT" | python3 -c "
+    import json, hashlib, sys
+    d = json.load(sys.stdin)
+    for b in d.get('data', []):
+        c = bytes.fromhex(b['kzg_commitment'][2:])
+        v = b'\x01' + hashlib.sha256(c).digest()[1:]
+        print('0x' + v.hex())
+    " > "$VHASH_FILE" 2>&1
+    echo "Extracted $(wc -l < "$VHASH_FILE" | tr -d ' ') versioned hashes"
+    VHASH1=$(sed -n '1p' "$VHASH_FILE")
+    VHASH2=$(sed -n '2p' "$VHASH_FILE")
+    rm -f "$VHASH_FILE"
+
+    stats() {
+        local label="$1"; shift
+        python3 -c "
+    import sys, math
+    label = sys.argv[1]
+    vals = list(map(int, sys.argv[2:]))
+    avg = sum(vals) / len(vals)
+    std = math.sqrt(sum((x - avg)**2 for x in vals) / len(vals))
+    print(f'avg: {avg:.0f} ms  stddev: {std:.0f} ms  [{label}]')
+    " "$label" "$@"
+    }
+
+    run_test() {
+        local label="$1" url="$2"
+        local TIMES=()
+        echo "$label"
+        for i in $(seq 1 $CALLS); do
+            START=$(date +%s%3N)
+            BYTES=$(curl -s -o /dev/null -w "%{size_download}" "$url")
+            END=$(date +%s%3N)
+            TIMES+=($((END - START)))
+            echo "Call #$i: ${BYTES} bytes, $((END - START)) ms"
+        done
+        stats "$label" "${TIMES[@]}"
+    }
+
+    run_test "blobs/$SLOT (all)" "$BASE_URL/eth/v1/beacon/blobs/$SLOT"
+    run_test "blobs/$SLOT (1 hash)" "$BASE_URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1"
+    run_test "blobs/$SLOT (2 hashes)" "$BASE_URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1,$VHASH2"
+    run_test "blob_sidecars/$SLOT" "$BASE_URL/eth/v1/beacon/blob_sidecars/$SLOT"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: beacon-perf-test
+  namespace: angkor-rpc-gateway
+spec:
+  restartPolicy: Never
+  containers:
+    - name: test
+      image: ubuntu:24.04
+      command:
+        - /bin/bash
+        - -c
+        - |
+          apt-get update -qq && apt-get install -y -qq curl python3 > /dev/null
+          bash /scripts/test.sh
+      env:
+        # Change BASE_URL to test different endpoints:
+        #   dugtrio:        http://dugtrio:8080
+        #   local beacon:   http://l1-stack-hoodi-execution-beacon-fallback-0.l1-stack-hoodi-execution-beacon-fallback:5052
+        #   quicknode:      $(QUICKNODE_URL)  — already injected from secret below
+        - name: BASE_URL
+          value: "http://dugtrio:8080"
+        - name: CALLS
+          value: "30"
+        - name: SCAN_SLOTS
+          value: "10"
+        - name: QUICKNODE_URL
+          valueFrom:
+            secretKeyRef:
+              name: l1-stack-hoodi-secrets
+              key: FALLBACK_BEACON_URL
+      volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+  volumes:
+    - name: scripts
+      configMap:
+        name: beacon-perf-test
+        defaultMode: 0755
