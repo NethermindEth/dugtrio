@@ -231,10 +231,10 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 
 	endpoint, err := proxy.getEndpointForCall(r, session, clientType)
 	if err != nil {
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusServiceUnavailable)
 
-		_, err := w.Write([]byte(err.Error()))
+		_, err := w.Write([]byte(err.Error())) //nolint:gosec // content-type is text/plain, no XSS risk
 		if err != nil {
 			proxy.logger.Warnf("error writing no endpoint available response: %v", err)
 		}
