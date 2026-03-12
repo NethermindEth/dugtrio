@@ -81,10 +81,10 @@ data:
         stats "$label" "${TIMES[@]}"
     }
 
-    run_test "blobs/$SLOT (all)" "$BASE_URL/eth/v1/beacon/blobs/$SLOT"
-    run_test "blobs/$SLOT (1 hash)" "$BASE_URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1"
-    run_test "blobs/$SLOT (2 hashes)" "$BASE_URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1,$VHASH2"
-    run_test "blob_sidecars/$SLOT" "$BASE_URL/eth/v1/beacon/blob_sidecars/$SLOT"
+    run_test "GET /eth/v1/beacon/blobs/$SLOT" "$BASE_URL/eth/v1/beacon/blobs/$SLOT"
+    run_test "GET /eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1" "$BASE_URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1"
+    run_test "GET /eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1,$VHASH2" "$BASE_URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1,$VHASH2"
+    run_test "GET /eth/v1/beacon/blob_sidecars/$SLOT" "$BASE_URL/eth/v1/beacon/blob_sidecars/$SLOT"
 ---
 apiVersion: v1
 kind: Pod
