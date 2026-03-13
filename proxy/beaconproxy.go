@@ -238,6 +238,21 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 			continue
 		}
 
+		// ContentLength == 0 means the upstream explicitly sent an empty body on a
+		// 2xx (e.g. beacon node mid-restart). Fall back rather than forwarding empty
+		// data. ContentLength == -1 means unknown/chunked — let it through.
+		if resp.ContentLength == 0 {
+			resp.Body.Close()
+
+			proxy.logger.WithFields(logrus.Fields{
+				"endpoint": endpoint.GetName(),
+				"method":   utils.SanitizeLogParam(r.Method),
+				"url":      utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+			}).Warnf("upstream returned empty body on 2xx, trying next")
+
+			continue
+		}
+
 		session.requests.Add(1)
 
 		if _, err = proxy.writeProxyResponse(w, r, session, resp, endpoint, callCtx); err != nil {
