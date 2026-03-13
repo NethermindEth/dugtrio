@@ -165,19 +165,26 @@ data:
         stats "$label" "${TIMES[@]}"
     }
 
-    check_consistency
-
-    i=0
-    while [ $i -lt "${#TARGETS[@]}" ]; do
-        LABEL="${TARGETS[$i]}"; URL="${TARGETS[$((i+1))]}"; i=$((i+2))
+    ROUND=0
+    while true; do
+        ROUND=$((ROUND + 1))
         echo ""
-        echo "=== Testing: $LABEL ($URL) ==="
-        run_test "[$LABEL] GET /eth/v1/beacon/blobs/$SLOT" "$URL/eth/v1/beacon/blobs/$SLOT"
-        if [ "$VHASH_VALID" = true ]; then
-            run_test "[$LABEL] GET /eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1" "$URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1"
-            run_test "[$LABEL] GET /eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1,$VHASH2" "$URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1,$VHASH2"
-        fi
-        run_test "[$LABEL] GET /eth/v1/beacon/blob_sidecars/$SLOT" "$URL/eth/v1/beacon/blob_sidecars/$SLOT"
+        echo "====== Round $ROUND ======"
+
+        check_consistency
+
+        i=0
+        while [ $i -lt "${#TARGETS[@]}" ]; do
+            LABEL="${TARGETS[$i]}"; URL="${TARGETS[$((i+1))]}"; i=$((i+2))
+            echo ""
+            echo "=== Testing: $LABEL ($URL) ==="
+            run_test "[$LABEL] GET /eth/v1/beacon/blobs/$SLOT" "$URL/eth/v1/beacon/blobs/$SLOT"
+            if [ "$VHASH_VALID" = true ]; then
+                run_test "[$LABEL] GET /eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1" "$URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1"
+                run_test "[$LABEL] GET /eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1,$VHASH2" "$URL/eth/v1/beacon/blobs/$SLOT?versioned_hashes=$VHASH1,$VHASH2"
+            fi
+            run_test "[$LABEL] GET /eth/v1/beacon/blob_sidecars/$SLOT" "$URL/eth/v1/beacon/blob_sidecars/$SLOT"
+        done
     done
 ---
 apiVersion: v1
@@ -186,7 +193,7 @@ metadata:
   name: beacon-perf-test
   namespace: angkor-rpc-gateway
 spec:
-  restartPolicy: Never
+  restartPolicy: Always
   containers:
     - name: test
       image: ubuntu:24.04
