@@ -24,9 +24,9 @@ CALLS="${CALLS:-30}"
 
 # Build list of (label url) pairs for configured endpoints
 TARGETS=()
-[ -n "$DUGTRIO_URL" ]       && TARGETS+=("dugtrio" "$DUGTRIO_URL")
-[ -n "$QUICKNODE_URL" ]     && TARGETS+=("quicknode" "$QUICKNODE_URL")
-[ -n "$LOCAL_BEACON_URL" ]  && TARGETS+=("local-beacon" "$LOCAL_BEACON_URL")
+[ -n "$DUGTRIO_URL" ]       && TARGETS+=("dugtrio" "${DUGTRIO_URL%/}")
+[ -n "$QUICKNODE_URL" ]     && TARGETS+=("quicknode" "${QUICKNODE_URL%/}")
+[ -n "$LOCAL_BEACON_URL" ]  && TARGETS+=("local-beacon" "${LOCAL_BEACON_URL%/}")
 
 if [ "${#TARGETS[@]}" -eq 0 ]; then
     echo "No endpoints configured, exiting." >&2

@@ -248,21 +248,34 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 			continue
 		}
 
-		// ContentLength == 0 means the upstream explicitly sent an empty body on a
-		// 2xx (e.g. beacon node mid-restart). Fall back rather than forwarding empty
-		// data. ContentLength == -1 means unknown/chunked — let it through.
-		if resp.ContentLength == 0 {
+		// Detect empty body regardless of Content-Length header value.
+		// ContentLength==0 covers explicit "Content-Length: 0".
+		// ContentLength==-1 covers chunked/unknown — we must peek to detect
+		// truly empty bodies (e.g. beacon mid-restart returning chunked 200 with no data).
+		peek := make([]byte, 1)
+		n, peekErr := resp.Body.Read(peek)
+
+		if n == 0 {
 			resp.Body.Close()
 			attemptCancel()
 
 			proxy.logger.WithFields(logrus.Fields{
-				"endpoint": endpoint.GetName(),
-				"method":   utils.SanitizeLogParam(r.Method),
-				"url":      utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+				"endpoint":      endpoint.GetName(),
+				"method":        utils.SanitizeLogParam(r.Method),
+				"url":           utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+				"content_length": resp.ContentLength,
 			}).Warnf("upstream returned empty body on 2xx, trying next")
 
 			continue
 		}
+
+		// Reconstruct the body stream: prepend the peeked byte.
+		resp.Body = io.NopCloser(io.MultiReader(strings.NewReader(string(peek[:n])), resp.Body))
+
+		// peekErr may be io.EOF if the entire response was exactly 1 byte — that is
+		// valid data, not an error. Any other peek error is unexpected but we still
+		// have n==1 bytes, so proceed and let writeProxyResponse handle it.
+		_ = peekErr
 
 		session.requests.Add(1)
 
