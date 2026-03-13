@@ -54,6 +54,29 @@ var passthruResponseHeaderKeys = [...]string{
 	"Vary",
 }
 
+// responseWriterTracker wraps http.ResponseWriter to record whether any
+// response has been committed. Used to send a 503 if no upstream succeeded.
+type responseWriterTracker struct {
+	http.ResponseWriter
+	wrote bool
+}
+
+func (rw *responseWriterTracker) WriteHeader(status int) {
+	rw.wrote = true
+	rw.ResponseWriter.WriteHeader(status)
+}
+
+func (rw *responseWriterTracker) Write(b []byte) (int, error) {
+	rw.wrote = true
+	return rw.ResponseWriter.Write(b)
+}
+
+func (rw *responseWriterTracker) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 type BeaconProxy struct {
 	config       *types.ProxyConfig
 	pool         *pool.BeaconPool
@@ -140,11 +163,13 @@ func (proxy *BeaconProxy) ServeHealthCheckHTTP(w http.ResponseWriter, _ *http.Re
 }
 
 func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, clientType pool.ClientType) {
-	if proxy.checkBlockedPaths(r.URL) {
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusForbidden)
+	rw := &responseWriterTracker{ResponseWriter: w}
 
-		if _, err := w.Write([]byte("Path Blocked")); err != nil {
+	if proxy.checkBlockedPaths(r.URL) {
+		rw.Header().Set("Content-Type", "text/plain")
+		rw.WriteHeader(http.StatusForbidden)
+
+		if _, err := rw.Write([]byte("Path Blocked")); err != nil {
 			proxy.logger.Warnf("error writing path blocked response: %v", err)
 		}
 
@@ -153,10 +178,10 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 
 	identifier, validAuth := proxy.CheckAuthorization(r)
 	if !validAuth {
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusUnauthorized)
+		rw.Header().Set("Content-Type", "text/plain")
+		rw.WriteHeader(http.StatusUnauthorized)
 
-		if _, err := w.Write([]byte("Unauthorized")); err != nil {
+		if _, err := rw.Write([]byte("Unauthorized")); err != nil {
 			proxy.logger.Warnf("error writing unauthorized response: %v", err)
 		}
 
@@ -165,10 +190,10 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 
 	session := proxy.getSessionForRequest(r, identifier)
 	if session.checkCallLimit(1) != nil {
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusTooManyRequests)
+		rw.Header().Set("Content-Type", "text/plain")
+		rw.WriteHeader(http.StatusTooManyRequests)
 
-		if _, err := w.Write([]byte("Call Limit exceeded")); err != nil {
+		if _, err := rw.Write([]byte("Call Limit exceeded")); err != nil {
 			proxy.logger.Warnf("error writing call limit exceeded response: %v", err)
 		}
 
@@ -182,16 +207,37 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 
 		body, err = io.ReadAll(r.Body)
 		if err != nil {
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusInternalServerError)
+			rw.Header().Set("Content-Type", "text/plain")
+			rw.WriteHeader(http.StatusInternalServerError)
 			proxy.logger.Warnf("error reading request body: %v", err)
 
 			return
 		}
 	}
 
-	callCtx := proxy.newProxyCallContext(r.Context(), proxy.config.CallTimeout)
+	// Total budget covers the full retry chain: one callTimeout per endpoint.
+	// Using a single callTimeout for callCtx means the fallback has zero budget
+	// after the primary exhausts it (e.g. hanging during beacon restart).
+	totalTimeout := proxy.config.CallTimeout * time.Duration(len(proxy.pool.GetAllEndpoints())+1)
+	callCtx := proxy.newProxyCallContext(r.Context(), totalTimeout)
 	contextID := session.addActiveContext(callCtx.cancelFn)
+
+	// Guard: if we exit without writing any response (e.g. all attempts timed out
+	// and callCtx was cancelled before writeProxyResponse committed headers),
+	// return 503 explicitly so the client never receives an empty 200.
+	defer func() {
+		if !rw.wrote {
+			proxy.logger.WithFields(logrus.Fields{
+				"method": utils.SanitizeLogParam(r.Method),
+				"url":    utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+			}).Warn("no response written to client — sending 503")
+			rw.ResponseWriter.Header().Set("Content-Type", "text/plain")
+			rw.ResponseWriter.WriteHeader(http.StatusServiceUnavailable)
+			if _, wErr := rw.ResponseWriter.Write([]byte("upstream timeout")); wErr != nil {
+				proxy.logger.Warnf("error writing upstream timeout response: %v", wErr)
+			}
+		}
+	}()
 
 	defer func() {
 		callCtx.cancelFn()
@@ -203,10 +249,10 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 	for {
 		endpoint := proxy.pool.GetReadyEndpointExcluding(clientType, tried)
 		if endpoint == nil {
-			w.Header().Set("Content-Type", "text/plain")
-			w.WriteHeader(http.StatusServiceUnavailable)
+			rw.Header().Set("Content-Type", "text/plain")
+			rw.WriteHeader(http.StatusServiceUnavailable)
 
-			if _, err := w.Write([]byte("no upstream available")); err != nil {
+			if _, err := rw.Write([]byte("no upstream available")); err != nil {
 				proxy.logger.Warnf("error writing no upstream response: %v", err)
 			}
 
@@ -260,10 +306,11 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 			attemptCancel()
 
 			proxy.logger.WithFields(logrus.Fields{
-				"endpoint":      endpoint.GetName(),
-				"method":        utils.SanitizeLogParam(r.Method),
-				"url":           utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+				"endpoint":       endpoint.GetName(),
+				"method":         utils.SanitizeLogParam(r.Method),
+				"url":            utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
 				"content_length": resp.ContentLength,
+				"peek_error":     peekErr,
 			}).Warnf("upstream returned empty body on 2xx, trying next")
 
 			continue
@@ -272,14 +319,20 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 		// Reconstruct the body stream: prepend the peeked byte.
 		resp.Body = io.NopCloser(io.MultiReader(strings.NewReader(string(peek[:n])), resp.Body))
 
-		// peekErr may be io.EOF if the entire response was exactly 1 byte — that is
-		// valid data, not an error. Any other peek error is unexpected but we still
-		// have n==1 bytes, so proceed and let writeProxyResponse handle it.
-		_ = peekErr
+		// peekErr may be io.EOF if the entire response was exactly 1 byte — valid
+		// data. Log any unexpected non-EOF error for diagnostics but proceed since
+		// we have n==1 bytes of real data.
+		if peekErr != nil && peekErr != io.EOF {
+			proxy.logger.WithFields(logrus.Fields{
+				"endpoint": endpoint.GetName(),
+				"method":   utils.SanitizeLogParam(r.Method),
+				"url":      utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+			}).Debugf("unexpected peek error (proceeding with n=1 byte): %v", peekErr)
+		}
 
 		session.requests.Add(1)
 
-		if _, err = proxy.writeProxyResponse(w, r, session, resp, endpoint, callCtx); err != nil {
+		if _, err = proxy.writeProxyResponse(rw, r, session, resp, endpoint, callCtx); err != nil {
 			proxy.logger.WithFields(logrus.Fields{
 				"endpoint": endpoint.GetName(),
 			}).Warnf("proxy stream error: %v", err)

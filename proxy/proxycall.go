@@ -13,6 +13,7 @@ import (
 
 	"github.com/ethpandaops/dugtrio/pool"
 	"github.com/ethpandaops/dugtrio/utils"
+	"github.com/sirupsen/logrus"
 )
 
 type proxyCallContext struct {
@@ -132,6 +133,11 @@ func (proxy *BeaconProxy) writeProxyResponse(w http.ResponseWriter, r *http.Requ
 	defer resp.Body.Close()
 
 	if callCtx.cancelled {
+		proxy.logger.WithFields(logrus.Fields{
+			"endpoint": endpoint.GetName(),
+			"method":   utils.SanitizeLogParam(r.Method),
+			"url":      utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+		}).Warn("call context already cancelled before response streaming — upstream took too long")
 		return 0, fmt.Errorf("proxy context cancelled before streaming")
 	}
 
