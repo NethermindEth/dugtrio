@@ -217,12 +217,14 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 
 		// Each attempt gets its own fresh timeout so a slow/hanging primary
 		// does not consume the fallback's time budget.
+		// attemptCancel must be called after the response body is fully streamed,
+		// not before — canceling early drops the HTTP connection mid-body.
 		attemptCtx, attemptCancel := context.WithTimeout(r.Context(), proxy.config.CallTimeout)
+
 		resp, err := proxy.doUpstreamRequest(attemptCtx, r, body, endpoint)
-
-		attemptCancel()
-
 		if err != nil {
+			attemptCancel()
+
 			proxy.logger.WithFields(logrus.Fields{
 				"endpoint": endpoint.GetName(),
 				"method":   utils.SanitizeLogParam(r.Method),
@@ -234,6 +236,7 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			resp.Body.Close()
+			attemptCancel()
 
 			proxy.logger.WithFields(logrus.Fields{
 				"endpoint": endpoint.GetName(),
@@ -250,6 +253,7 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 		// data. ContentLength == -1 means unknown/chunked — let it through.
 		if resp.ContentLength == 0 {
 			resp.Body.Close()
+			attemptCancel()
 
 			proxy.logger.WithFields(logrus.Fields{
 				"endpoint": endpoint.GetName(),
@@ -267,6 +271,8 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 				"endpoint": endpoint.GetName(),
 			}).Warnf("proxy stream error: %v", err)
 		}
+
+		attemptCancel()
 
 		return
 	}
