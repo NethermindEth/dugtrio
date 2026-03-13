@@ -2,7 +2,10 @@
 bin/
 dist/
 .tmp
+tmp/
 tmp-*
+nohup.out
+PLAN.md
 dugtrio-config.yaml
 dugtrio-log.log
 .hack/devnet/generated-dugtrio-config.yaml

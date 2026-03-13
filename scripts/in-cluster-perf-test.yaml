@@ -217,7 +217,7 @@ spec:
               name: l1-stack-hoodi-secrets
               key: FALLBACK_BEACON_URL
         - name: LOCAL_BEACON_URL
-          value: "http://l1-stack-hoodi-execution-beacon-fallback-0.l1-stack-hoodi-execution-beacon-fallback:5052"
+          value: "http://l1-stack-hoodi-execution-beacon-0.l1-stack-hoodi-execution-beacon:5052"
         - name: CALLS
           value: "100"
         - name: SCAN_SLOTS

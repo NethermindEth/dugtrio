@@ -8,7 +8,7 @@
 #
 # Port-forward commands for local testing:
 #   kubectl port-forward pod/dugtrio-0 -n angkor-rpc-gateway 8080:8080
-#   kubectl port-forward pod/l1-stack-hoodi-execution-beacon-fallback-0 -n angkor-rpc-gateway 5052:5052
+#   kubectl port-forward pod/l1-stack-hoodi-execution-beacon-0 -n angkor-rpc-gateway 5052:5052
 #
 # Example local run against all three:
 #   DUGTRIO_URL=http://localhost:8080 \
