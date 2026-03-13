@@ -183,6 +183,9 @@ stats() {
 import sys, math
 label = sys.argv[1]
 vals = list(map(int, sys.argv[2:]))
+if not vals:
+    print(f'no valid calls  [{label}]')
+    sys.exit(0)
 avg = sum(vals) / len(vals)
 std = math.sqrt(sum((x - avg) ** 2 for x in vals) / len(vals))
 print(f'avg: {avg:.0f} ms  stddev: {std:.0f} ms  [{label}]')
@@ -193,15 +196,27 @@ run_test() {
     local label="$1"
     local url="$2"
     local TIMES=()
+    local FAILED=0
     echo "$label"
     for i in $(seq 1 $CALLS); do
         START=$(date +%s%3N)
-        BYTES=$(curl -sL -o /dev/null -w "%{size_download}" "$url")
+        RESULT=$(curl -sL -o /dev/null -w "%{http_code}:%{size_download}" "$url")
         END=$(date +%s%3N)
+        local STATUS BYTES ELAPSED
+        STATUS=$(echo "$RESULT" | cut -d: -f1)
+        BYTES=$(echo "$RESULT" | cut -d: -f2)
         ELAPSED=$((END - START))
-        TIMES+=($ELAPSED)
-        echo "Call #$i: ${BYTES} bytes, ${ELAPSED} ms"
+        if [ "$BYTES" -eq 0 ] || [ "${STATUS:-0}" -lt 200 ] || [ "${STATUS:-0}" -ge 300 ]; then
+            echo "Call #$i: FAILED (status=$STATUS bytes=$BYTES) — excluded from stats"
+            FAILED=$((FAILED + 1))
+        else
+            TIMES+=($ELAPSED)
+            echo "Call #$i: ${BYTES} bytes, ${ELAPSED} ms"
+        fi
     done
+    if [ "$FAILED" -gt 0 ]; then
+        echo "Failed calls: $FAILED/$CALLS (excluded from stats)"
+    fi
     stats "$label" "${TIMES[@]}"
 }
 
