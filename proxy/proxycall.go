@@ -138,6 +138,7 @@ func (proxy *BeaconProxy) writeProxyResponse(w http.ResponseWriter, r *http.Requ
 			"method":   utils.SanitizeLogParam(r.Method),
 			"url":      utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
 		}).Warn("call context already cancelled before response streaming — upstream took too long")
+
 		return 0, fmt.Errorf("proxy context cancelled before streaming")
 	}
 

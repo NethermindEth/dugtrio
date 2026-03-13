@@ -233,6 +233,7 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 			}).Warn("no response written to client — sending 503")
 			rw.ResponseWriter.Header().Set("Content-Type", "text/plain")
 			rw.ResponseWriter.WriteHeader(http.StatusServiceUnavailable)
+
 			if _, wErr := rw.ResponseWriter.Write([]byte("upstream timeout")); wErr != nil {
 				proxy.logger.Warnf("error writing upstream timeout response: %v", wErr)
 			}
