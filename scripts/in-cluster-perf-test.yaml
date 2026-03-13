@@ -151,12 +151,14 @@ data:
             STATUS=$(echo "$RESULT" | cut -d: -f1)
             BYTES=$(echo "$RESULT" | cut -d: -f2)
             ELAPSED=$((END - START))
+            local TS
+            TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
             if [ "$BYTES" -eq 0 ] || [ "${STATUS:-0}" -lt 200 ] || [ "${STATUS:-0}" -ge 300 ]; then
-                echo "Call #$i: FAILED (status=$STATUS bytes=$BYTES) — excluded from stats"
+                echo "$TS Call #$i: FAILED (status=$STATUS bytes=$BYTES) — excluded from stats"
                 FAILED=$((FAILED + 1))
             else
                 TIMES+=($ELAPSED)
-                echo "Call #$i: ${BYTES} bytes, ${ELAPSED} ms"
+                echo "$TS Call #$i: ${BYTES} bytes, ${ELAPSED} ms"
             fi
         done
         if [ "$FAILED" -gt 0 ]; then
