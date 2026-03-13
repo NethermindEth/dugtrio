@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"io"
 	"math"
 	"net/http"
@@ -214,7 +215,13 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 
 		tried = append(tried, endpoint.GetName())
 
-		resp, err := proxy.doUpstreamRequest(callCtx.context, r, body, endpoint)
+		// Each attempt gets its own fresh timeout so a slow/hanging primary
+		// does not consume the fallback's time budget.
+		attemptCtx, attemptCancel := context.WithTimeout(r.Context(), proxy.config.CallTimeout)
+		resp, err := proxy.doUpstreamRequest(attemptCtx, r, body, endpoint)
+
+		attemptCancel()
+
 		if err != nil {
 			proxy.logger.WithFields(logrus.Fields{
 				"endpoint": endpoint.GetName(),
