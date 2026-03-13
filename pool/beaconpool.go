@@ -2,6 +2,7 @@ package pool
 
 import (
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/ethpandaops/dugtrio/types"
@@ -115,16 +116,7 @@ func (pool *BeaconPool) GetReadyEndpointExcluding(clientType ClientType, exclude
 	}
 
 	for _, client := range pool.clients {
-		ready := false
-
-		for _, rc := range readyClients {
-			if rc == client {
-				ready = true
-				break
-			}
-		}
-
-		if !ready {
+		if !slices.Contains(readyClients, client) {
 			continue
 		}
 
@@ -132,16 +124,7 @@ func (pool *BeaconPool) GetReadyEndpointExcluding(clientType ClientType, exclude
 			continue
 		}
 
-		excluded := false
-
-		for _, name := range exclude {
-			if client.GetName() == name {
-				excluded = true
-				break
-			}
-		}
-
-		if !excluded {
+		if !slices.Contains(exclude, client.GetName()) {
 			return client
 		}
 	}

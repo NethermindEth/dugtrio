@@ -61,7 +61,6 @@ ctxLoop:
 }
 
 // doUpstreamRequest builds and dispatches an HTTP request to endpoint.
-// Takes context.Context directly so it works for both single-call and fan-out race paths.
 func (proxy *BeaconProxy) doUpstreamRequest(ctx context.Context, r *http.Request, body []byte, endpoint *pool.Client) (*http.Response, error) {
 	endpointConfig := endpoint.GetEndpointConfig()
 

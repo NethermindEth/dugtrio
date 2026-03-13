@@ -197,7 +197,7 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 		session.removeActiveContext(contextID)
 	}()
 
-	tried := []string{}
+	var tried []string
 
 	for {
 		endpoint := proxy.pool.GetReadyEndpointExcluding(clientType, tried)
