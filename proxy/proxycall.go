@@ -60,36 +60,6 @@ ctxLoop:
 	}
 }
 
-func (proxy *BeaconProxy) processProxyCall(w http.ResponseWriter, r *http.Request, session *Session, endpoint *pool.Client) error {
-	callCtx := proxy.newProxyCallContext(r.Context(), proxy.config.CallTimeout)
-	contextID := session.addActiveContext(callCtx.cancelFn)
-
-	defer func() {
-		callCtx.cancelFn()
-		session.removeActiveContext(contextID)
-	}()
-
-	var body []byte
-
-	if r.Body != nil {
-		var err error
-
-		body, err = io.ReadAll(r.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read request body: %w", err)
-		}
-	}
-
-	resp, err := proxy.doUpstreamRequest(callCtx.context, r, body, endpoint)
-	if err != nil {
-		return err
-	}
-
-	_, err = proxy.writeProxyResponse(w, r, session, resp, endpoint, callCtx)
-
-	return err
-}
-
 // doUpstreamRequest builds and dispatches an HTTP request to endpoint.
 // Takes context.Context directly so it works for both single-call and fan-out race paths.
 func (proxy *BeaconProxy) doUpstreamRequest(ctx context.Context, r *http.Request, body []byte, endpoint *pool.Client) (*http.Response, error) {

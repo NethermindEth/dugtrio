@@ -1,7 +1,7 @@
 package proxy
 
 import (
-	"fmt"
+	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -59,7 +59,6 @@ type BeaconProxy struct {
 	proxyMetrics *metrics.ProxyMetrics
 	logger       *logrus.Entry
 	blockedPaths []*regexp.Regexp
-	fanoutPaths  []*regexp.Regexp
 
 	sessionMutex sync.Mutex
 	sessions     map[string]*Session
@@ -72,7 +71,6 @@ func NewBeaconProxy(config *types.ProxyConfig, beaconPool *pool.BeaconPool, prox
 		proxyMetrics: proxyMetrics,
 		logger:       logrus.WithField("module", "proxy"),
 		blockedPaths: []*regexp.Regexp{},
-		fanoutPaths:  []*regexp.Regexp{},
 		sessions:     map[string]*Session{},
 	}
 
@@ -96,28 +94,6 @@ func NewBeaconProxy(config *types.ProxyConfig, beaconPool *pool.BeaconPool, prox
 		}
 
 		proxy.blockedPaths = append(proxy.blockedPaths, blockedPathPattern)
-	}
-
-	fanoutPaths := []string{}
-	fanoutPaths = append(fanoutPaths, config.FanoutPaths...)
-
-	for _, fanoutPath := range strings.Split(config.FanoutPathsStr, ",") {
-		fanoutPath = strings.Trim(fanoutPath, " ")
-		if fanoutPath == "" {
-			continue
-		}
-
-		fanoutPaths = append(fanoutPaths, fanoutPath)
-	}
-
-	for _, fanoutPath := range fanoutPaths {
-		fanoutPathPattern, err := regexp.Compile(fanoutPath)
-		if err != nil {
-			proxy.logger.Errorf("error parsing fanout path pattern '%v': %v", fanoutPath, err)
-			continue
-		}
-
-		proxy.fanoutPaths = append(proxy.fanoutPaths, fanoutPathPattern)
 	}
 
 	if config.CallTimeout == 0 {
@@ -164,11 +140,10 @@ func (proxy *BeaconProxy) ServeHealthCheckHTTP(w http.ResponseWriter, _ *http.Re
 
 func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, clientType pool.ClientType) {
 	if proxy.checkBlockedPaths(r.URL) {
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusForbidden)
 
-		_, err := w.Write([]byte("Path Blocked"))
-		if err != nil {
+		if _, err := w.Write([]byte("Path Blocked")); err != nil {
 			proxy.logger.Warnf("error writing path blocked response: %v", err)
 		}
 
@@ -177,11 +152,10 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 
 	identifier, validAuth := proxy.CheckAuthorization(r)
 	if !validAuth {
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusUnauthorized)
 
-		_, err := w.Write([]byte("Unauthorized"))
-		if err != nil {
+		if _, err := w.Write([]byte("Unauthorized")); err != nil {
 			proxy.logger.Warnf("error writing unauthorized response: %v", err)
 		}
 
@@ -190,87 +164,89 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 
 	session := proxy.getSessionForRequest(r, identifier)
 	if session.checkCallLimit(1) != nil {
-		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Type", "text/plain")
 		w.WriteHeader(http.StatusTooManyRequests)
 
-		_, err := w.Write([]byte("Call Limit exceeded"))
-		if err != nil {
+		if _, err := w.Write([]byte("Call Limit exceeded")); err != nil {
 			proxy.logger.Warnf("error writing call limit exceeded response: %v", err)
 		}
 
 		return
 	}
 
-	if proxy.checkFanoutPaths(r.URL) {
-		// Fan out to all ready endpoints regardless of minCgc; endpoints that
-		// cannot serve the request (e.g. insufficient custody groups) return
-		// non-2xx and are dropped by processRaceProxyCall.
-		if endpoints := proxy.pool.GetReadyEndpoints(clientType, 0); len(endpoints) > 0 {
-			session.requests.Add(1)
+	var body []byte
 
-			err := proxy.processRaceProxyCall(w, r, session, endpoints)
-			if err != nil {
-				w.Header().Set("Content-Type", "text/html")
-				w.WriteHeader(http.StatusInternalServerError)
+	if r.Body != nil {
+		var err error
 
-				proxy.logger.WithFields(logrus.Fields{
-					"method": utils.SanitizeLogParam(r.Method),
-					"url":    utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
-				}).Warnf("fanout proxy error: %v", utils.SanitizeLogParam(err.Error()))
+		body, err = io.ReadAll(r.Body)
+		if err != nil {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusInternalServerError)
+			proxy.logger.Warnf("error reading request body: %v", err)
 
-				_, err = w.Write([]byte("Internal Server Error"))
-				if err != nil {
-					proxy.logger.Warnf("error writing fanout error response: %v", err)
-				}
+			return
+		}
+	}
+
+	callCtx := proxy.newProxyCallContext(r.Context(), proxy.config.CallTimeout)
+	contextID := session.addActiveContext(callCtx.cancelFn)
+
+	defer func() {
+		callCtx.cancelFn()
+		session.removeActiveContext(contextID)
+	}()
+
+	tried := []string{}
+
+	for {
+		endpoint := proxy.pool.GetReadyEndpointExcluding(clientType, tried)
+		if endpoint == nil {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusServiceUnavailable)
+
+			if _, err := w.Write([]byte("no upstream available")); err != nil {
+				proxy.logger.Warnf("error writing no upstream response: %v", err)
 			}
 
 			return
 		}
-		// No ready endpoints in pool — fall through to normal routing.
-	}
 
-	endpoint, err := proxy.getEndpointForCall(r, session, clientType)
-	if err != nil {
-		w.Header().Set("Content-Type", "text/plain")
-		w.WriteHeader(http.StatusServiceUnavailable)
+		tried = append(tried, endpoint.GetName())
 
-		_, err := w.Write([]byte(err.Error())) //nolint:gosec // content-type is text/plain, no XSS risk
+		resp, err := proxy.doUpstreamRequest(callCtx.context, r, body, endpoint)
 		if err != nil {
-			proxy.logger.Warnf("error writing no endpoint available response: %v", err)
+			proxy.logger.WithFields(logrus.Fields{
+				"endpoint": endpoint.GetName(),
+				"method":   utils.SanitizeLogParam(r.Method),
+				"url":      utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+			}).Warnf("upstream request failed, trying next: %v", err)
+
+			continue
+		}
+
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			resp.Body.Close()
+
+			proxy.logger.WithFields(logrus.Fields{
+				"endpoint": endpoint.GetName(),
+				"method":   utils.SanitizeLogParam(r.Method),
+				"url":      utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+				"status":   resp.StatusCode,
+			}).Warnf("upstream returned non-2xx, trying next")
+
+			continue
+		}
+
+		session.requests.Add(1)
+
+		if _, err = proxy.writeProxyResponse(w, r, session, resp, endpoint, callCtx); err != nil {
+			proxy.logger.WithFields(logrus.Fields{
+				"endpoint": endpoint.GetName(),
+			}).Warnf("proxy stream error: %v", err)
 		}
 
 		return
-	}
-
-	if endpoint == nil {
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusServiceUnavailable)
-
-		_, err := w.Write([]byte("No Endpoint available"))
-		if err != nil {
-			proxy.logger.Warnf("error writing no endpoint available response: %v", err)
-		}
-
-		return
-	}
-
-	session.requests.Add(1)
-
-	err = proxy.processProxyCall(w, r, session, endpoint)
-	if err != nil {
-		w.Header().Set("Content-Type", "text/html")
-		w.WriteHeader(http.StatusInternalServerError)
-
-		proxy.logger.WithFields(logrus.Fields{
-			"endpoint": endpoint.GetName(),
-			"method":   utils.SanitizeLogParam(r.Method),
-			"url":      utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
-		}).Warnf("proxy error %v", err)
-
-		_, err = w.Write([]byte("Internal Server Error"))
-		if err != nil {
-			proxy.logger.Warnf("error writing internal server error response: %v", err)
-		}
 	}
 }
 
@@ -283,67 +259,6 @@ func (proxy *BeaconProxy) checkBlockedPaths(reqURL *url.URL) bool {
 	}
 
 	return false
-}
-
-func (proxy *BeaconProxy) checkFanoutPaths(reqURL *url.URL) bool {
-	for _, pattern := range proxy.fanoutPaths {
-		if pattern.MatchString(reqURL.EscapedPath()) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func (proxy *BeaconProxy) getEndpointForCall(r *http.Request, session *Session, clientType pool.ClientType) (*pool.Client, error) {
-	var endpoint *pool.Client
-	if proxy.config.StickyEndpoint && proxy.pool.IsClientReady(session.lastPoolClient) {
-		endpoint = session.lastPoolClient
-	}
-
-	minCgc := uint16(0)
-	if strings.HasPrefix(r.URL.Path, "/eth/v1/beacon/blobs/") {
-		minCgc = 64 // 64 is the minimum CGC for blobs
-	}
-
-	nextEndpoint := r.Header.Get("X-Dugtrio-Next-Endpoint")
-	if nextEndpoint == "" {
-		nextEndpoint = r.URL.Query().Get("dugtrio-next-endpoint")
-	}
-
-	if nextEndpoint != "" {
-		endpoint = nil
-
-		nextEndpointType := pool.ParseClientType(nextEndpoint)
-		if nextEndpointType != pool.UnknownClient {
-			clientType = nextEndpointType
-		} else if client := proxy.pool.GetEndpointByName(nextEndpoint); client != nil {
-			if client.GetCustodyGroupCount() < minCgc {
-				return nil, fmt.Errorf("endpoint %s has too low CGC (%d < %d)", nextEndpoint, client.GetCustodyGroupCount(), minCgc)
-			}
-
-			endpoint = client
-			clientType = pool.UnspecifiedClient
-		} else {
-			return nil, fmt.Errorf("no endpoint matches X-Dugtrio-Next-Endpoint filter")
-		}
-	}
-
-	if minCgc > 0 && endpoint != nil {
-		if endpoint.GetCustodyGroupCount() < minCgc {
-			endpoint = nil
-		}
-	}
-
-	if endpoint == nil || (clientType != pool.UnspecifiedClient && endpoint.GetClientType() != clientType) {
-		endpoint = proxy.pool.GetReadyEndpoint(clientType, minCgc)
-
-		if minCgc == 0 {
-			session.setLastPoolClient(endpoint)
-		}
-	}
-
-	return endpoint, nil
 }
 
 func (proxy *BeaconProxy) rebalanceSessionsLoop() {

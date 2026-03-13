@@ -10,7 +10,8 @@ import (
 type SchedulerMode uint8
 
 var (
-	RoundRobinScheduler SchedulerMode = 1
+	RoundRobinScheduler      SchedulerMode = 1
+	PrimaryFallbackScheduler SchedulerMode = 2
 )
 
 type BeaconPool struct {
@@ -38,6 +39,8 @@ func NewBeaconPool(config *types.PoolConfig) (*BeaconPool, error) {
 	switch config.SchedulerMode {
 	case "", "rr", "roundrobin":
 		pool.schedulerMode = RoundRobinScheduler
+	case "primary-fallback":
+		pool.schedulerMode = PrimaryFallbackScheduler
 	default:
 		return nil, fmt.Errorf("unknown pool schedulerMode: %v", config.SchedulerMode)
 	}
@@ -98,7 +101,9 @@ func (pool *BeaconPool) GetReadyEndpoint(clientType ClientType, minCgc uint16) *
 	return selectedClient
 }
 
-func (pool *BeaconPool) GetReadyEndpoints(clientType ClientType, minCgc uint16) []*Client {
+// GetReadyEndpointExcluding returns the first ready endpoint in declaration order
+// whose name is not in the exclude list. Used by primary-fallback routing.
+func (pool *BeaconPool) GetReadyEndpointExcluding(clientType ClientType, exclude []string) *Client {
 	canonicalFork := pool.GetCanonicalFork()
 	if canonicalFork == nil {
 		return nil
@@ -109,27 +114,39 @@ func (pool *BeaconPool) GetReadyEndpoints(clientType ClientType, minCgc uint16) 
 		return nil
 	}
 
-	if clientType == UnspecifiedClient && minCgc == 0 {
-		result := make([]*Client, len(readyClients))
-		copy(result, readyClients)
+	for _, client := range pool.clients {
+		ready := false
 
-		return result
-	}
+		for _, rc := range readyClients {
+			if rc == client {
+				ready = true
+				break
+			}
+		}
 
-	result := make([]*Client, 0, len(readyClients))
-	for _, client := range readyClients {
+		if !ready {
+			continue
+		}
+
 		if clientType != UnspecifiedClient && client.clientType != clientType {
 			continue
 		}
 
-		if minCgc > 0 && client.GetCustodyGroupCount() < minCgc {
-			continue
+		excluded := false
+
+		for _, name := range exclude {
+			if client.GetName() == name {
+				excluded = true
+				break
+			}
 		}
 
-		result = append(result, client)
+		if !excluded {
+			return client
+		}
 	}
 
-	return result
+	return nil
 }
 
 func (pool *BeaconPool) IsClientReady(client *Client) bool {

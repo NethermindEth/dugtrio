@@ -23,7 +23,7 @@ endpoints:
 
 # Pool configuration
 pool:
-  schedulerMode: "rr"
+  schedulerMode: "primary-fallback"
   followDistance: 10
   maxHeadDistance: 2
 
@@ -38,20 +38,11 @@ proxy:
   # proxy session timeout
   sessionTimeout: 10m
 
-  # reuse the same endpoint when possible (not applicable when fanoutPaths covers all requests)
-  stickyEndpoint: false
-
   # call rate limit (calls per second)
   callRateLimit: 100
 
   # call rate burst limit
   callRateBurst: 1000
-
-  # api paths to fan out across all endpoints simultaneously (regex patterns)
-  # first 2xx response wins; useful for latency-sensitive or HA beacon calls
-  # use ".*" to fan out all requests (ignores schedulerMode for matched paths)
-  fanoutPaths:
-    - ".*"
 
   # blocked api paths (regex patterns)
   blockedPaths:
