@@ -102,6 +102,81 @@ else
     echo "Warning: versioned hash extraction failed, skipping versioned_hashes tests"
 fi
 
+check_consistency() {
+    echo ""
+    echo "=== Consistency Check (slot $SLOT) ==="
+
+    local REF_LABEL="" REF_SC_COUNT="" REF_SC_CHASH="" REF_BLOBS_HASH=""
+    local CONSISTENT=true
+
+    i=0
+    while [ $i -lt "${#TARGETS[@]}" ]; do
+        local LABEL="${TARGETS[$i]}"
+        local URL="${TARGETS[$((i+1))]}"
+        i=$((i+2))
+
+        # blob_sidecars: count, kzg_commitments fingerprint, blob field presence
+        local SC_RESULT
+        SC_RESULT=$(curl -sL "$URL/eth/v1/beacon/blob_sidecars/$SLOT" | python3 -c "
+import json, hashlib, sys
+try:
+    d = json.load(sys.stdin)
+    items = d.get('data', [])
+    count = len(items)
+    commitments = sorted(b['kzg_commitment'] for b in items)
+    chash = hashlib.sha256(','.join(commitments).encode()).hexdigest()[:16]
+    has_blob = all('blob' in b for b in items)
+    print(f'{count}|{chash}|{has_blob}')
+except Exception as e:
+    print(f'ERR|error|False')
+" 2>/dev/null)
+        local SC_COUNT SC_CHASH SC_HAS_BLOB
+        SC_COUNT=$(echo "$SC_RESULT" | cut -d'|' -f1)
+        SC_CHASH=$(echo "$SC_RESULT" | cut -d'|' -f2)
+        SC_HAS_BLOB=$(echo "$SC_RESULT" | cut -d'|' -f3)
+
+        # blobs: SHA256 of full response body
+        local BLOBS_HASH
+        BLOBS_HASH=$(curl -sL "$URL/eth/v1/beacon/blobs/$SLOT" | python3 -c "
+import sys, hashlib
+data = sys.stdin.buffer.read()
+print(hashlib.sha256(data).hexdigest()[:16])
+" 2>/dev/null)
+
+        echo "[$LABEL] blob_sidecars: count=$SC_COUNT  kzg_hash=$SC_CHASH  has_blob=$SC_HAS_BLOB  blobs_sha256=$BLOBS_HASH"
+
+        if [ -z "$REF_LABEL" ]; then
+            REF_LABEL="$LABEL"
+            REF_SC_COUNT="$SC_COUNT"
+            REF_SC_CHASH="$SC_CHASH"
+            REF_BLOBS_HASH="$BLOBS_HASH"
+        else
+            if [ "$SC_COUNT" != "$REF_SC_COUNT" ]; then
+                echo "  MISMATCH blob count: [$LABEL] $SC_COUNT != [$REF_LABEL] $REF_SC_COUNT"
+                CONSISTENT=false
+            fi
+            if [ "$SC_CHASH" != "$REF_SC_CHASH" ]; then
+                echo "  MISMATCH kzg_commitments: [$LABEL] $SC_CHASH != [$REF_LABEL] $REF_SC_CHASH"
+                CONSISTENT=false
+            fi
+            if [ "$BLOBS_HASH" != "$REF_BLOBS_HASH" ]; then
+                echo "  MISMATCH blobs response: [$LABEL] $BLOBS_HASH != [$REF_LABEL] $REF_BLOBS_HASH"
+                CONSISTENT=false
+            fi
+        fi
+        if [ "$SC_HAS_BLOB" = "False" ]; then
+            echo "  WARNING: [$LABEL] blob_sidecars missing blob field — incomplete data"
+            CONSISTENT=false
+        fi
+    done
+
+    if [ "$CONSISTENT" = true ]; then
+        echo "OK: all endpoints return consistent data"
+    else
+        echo "FAIL: data inconsistency detected across endpoints"
+    fi
+}
+
 stats() {
     local label="$1"; shift
     python3 -c "
@@ -129,6 +204,8 @@ run_test() {
     done
     stats "$label" "${TIMES[@]}"
 }
+
+check_consistency
 
 # Run all tests for each configured endpoint
 i=0
