@@ -23,7 +23,7 @@ endpoints:
 
 # Pool configuration
 pool:
-  schedulerMode: "rr"
+  schedulerMode: "primary-fallback"
   followDistance: 10
   maxHeadDistance: 2
 
@@ -38,18 +38,11 @@ proxy:
   # proxy session timeout
   sessionTimeout: 10m
 
-  # reuse the same endpoint when possible
-  stickyEndpoint: true
-
   # call rate limit (calls per second)
   callRateLimit: 100
 
   # call rate burst limit
   callRateBurst: 1000
-
-  # api paths to race across all endpoints (regex patterns)
-  racePaths:
-    - "^/eth/v1/beacon/blobs/.*"
 
   # blocked api paths (regex patterns)
   blockedPaths:

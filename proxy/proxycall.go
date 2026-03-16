@@ -13,6 +13,7 @@ import (
 
 	"github.com/ethpandaops/dugtrio/pool"
 	"github.com/ethpandaops/dugtrio/utils"
+	"github.com/sirupsen/logrus"
 )
 
 type proxyCallContext struct {
@@ -60,38 +61,7 @@ ctxLoop:
 	}
 }
 
-func (proxy *BeaconProxy) processProxyCall(w http.ResponseWriter, r *http.Request, session *Session, endpoint *pool.Client) error {
-	callCtx := proxy.newProxyCallContext(r.Context(), proxy.config.CallTimeout)
-	contextID := session.addActiveContext(callCtx.cancelFn)
-
-	defer func() {
-		callCtx.cancelFn()
-		session.removeActiveContext(contextID)
-	}()
-
-	var body []byte
-
-	if r.Body != nil {
-		var err error
-
-		body, err = io.ReadAll(r.Body)
-		if err != nil {
-			return fmt.Errorf("failed to read request body: %w", err)
-		}
-	}
-
-	resp, err := proxy.doUpstreamRequest(callCtx.context, r, body, endpoint)
-	if err != nil {
-		return err
-	}
-
-	_, err = proxy.writeProxyResponse(w, r, session, resp, endpoint, callCtx)
-
-	return err
-}
-
 // doUpstreamRequest builds and dispatches an HTTP request to endpoint.
-// Takes context.Context directly so it works for both single-call and fan-out race paths.
 func (proxy *BeaconProxy) doUpstreamRequest(ctx context.Context, r *http.Request, body []byte, endpoint *pool.Client) (*http.Response, error) {
 	endpointConfig := endpoint.GetEndpointConfig()
 
@@ -120,7 +90,7 @@ func (proxy *BeaconProxy) doUpstreamRequest(ctx context.Context, r *http.Request
 		queryArgs = fmt.Sprintf("?%s", r.URL.RawQuery)
 	}
 
-	proxyURL, err := url.Parse(fmt.Sprintf("%s%s%s", endpointConfig.URL, r.URL.EscapedPath(), queryArgs))
+	proxyURL, err := url.Parse(fmt.Sprintf("%s%s%s", strings.TrimRight(endpointConfig.URL, "/"), r.URL.EscapedPath(), queryArgs))
 	if err != nil {
 		return nil, fmt.Errorf("error parsing proxy url: %w", err)
 	}
@@ -163,6 +133,12 @@ func (proxy *BeaconProxy) writeProxyResponse(w http.ResponseWriter, r *http.Requ
 	defer resp.Body.Close()
 
 	if callCtx.cancelled {
+		proxy.logger.WithFields(logrus.Fields{
+			"endpoint": endpoint.GetName(),
+			"method":   utils.SanitizeLogParam(r.Method),
+			"url":      utils.SanitizeLogParam(utils.GetRedactedURL(r.URL.String())),
+		}).Warn("call context already cancelled before response streaming — upstream took too long")
+
 		return 0, fmt.Errorf("proxy context cancelled before streaming")
 	}
 
@@ -217,7 +193,7 @@ func (proxy *BeaconProxy) writeProxyResponse(w http.ResponseWriter, r *http.Requ
 	}
 
 	proxy.logger.Debugf("proxied %v %v call (ip: %v, status: %v, length: %v, endpoint: %v)",
-		r.Method, r.URL.EscapedPath(), session.GetIPAddr(), resp.StatusCode, respLen, endpoint.GetName())
+		utils.SanitizeLogParam(r.Method), utils.SanitizeLogParam(r.URL.EscapedPath()), utils.SanitizeLogParam(session.GetIPAddr()), resp.StatusCode, respLen, endpoint.GetName())
 
 	return respLen, nil
 }
