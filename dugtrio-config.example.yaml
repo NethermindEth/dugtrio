@@ -16,8 +16,10 @@ server:
 endpoints:
   - name: "pk01"
     url: "http://10.16.71.108:5052"
+    # timeout: 2s  # optional: per-endpoint attempt timeout (overrides proxy.callTimeout)
   - name: "lh"
     url: "http://10.16.97.2:5052"
+    # timeout: 4s
   - name: "teku"
     url: "http://10.16.97.3:5051"
 

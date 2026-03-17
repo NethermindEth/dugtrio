@@ -88,6 +88,14 @@ type BeaconProxy struct {
 	sessions     map[string]*Session
 }
 
+func effectiveTimeout(globalTimeout time.Duration, epCfg *types.EndpointConfig) time.Duration {
+	if epCfg != nil && epCfg.Timeout > 0 {
+		return epCfg.Timeout
+	}
+
+	return globalTimeout
+}
+
 func NewBeaconProxy(config *types.ProxyConfig, beaconPool *pool.BeaconPool, proxyMetrics *metrics.ProxyMetrics) (*BeaconProxy, error) {
 	proxy := BeaconProxy{
 		config:       config,
@@ -218,7 +226,10 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 	// Total budget covers the full retry chain: one callTimeout per endpoint.
 	// Using a single callTimeout for callCtx means the fallback has zero budget
 	// after the primary exhausts it (e.g. hanging during beacon restart).
-	totalTimeout := proxy.config.CallTimeout * time.Duration(len(proxy.pool.GetAllEndpoints())+1)
+	totalTimeout := proxy.config.CallTimeout /* +1 buffer */
+	for _, ep := range proxy.pool.GetAllEndpoints() {
+		totalTimeout += effectiveTimeout(proxy.config.CallTimeout, ep.GetEndpointConfig())
+	}
 	callCtx := proxy.newProxyCallContext(r.Context(), totalTimeout)
 	contextID := session.addActiveContext(callCtx.cancelFn)
 
@@ -266,7 +277,7 @@ func (proxy *BeaconProxy) processCall(w http.ResponseWriter, r *http.Request, cl
 		// does not consume the fallback's time budget.
 		// attemptCancel must be called after the response body is fully streamed,
 		// not before — canceling early drops the HTTP connection mid-body.
-		attemptCtx, attemptCancel := context.WithTimeout(r.Context(), proxy.config.CallTimeout)
+		attemptCtx, attemptCancel := context.WithTimeout(r.Context(), effectiveTimeout(proxy.config.CallTimeout, endpoint.GetEndpointConfig()))
 
 		resp, err := proxy.doUpstreamRequest(attemptCtx, r, body, endpoint)
 		if err != nil {
