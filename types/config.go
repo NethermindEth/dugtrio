@@ -28,6 +28,7 @@ type EndpointConfig struct {
 	Priority int               `yaml:"priority"`
 	Weight   int               `yaml:"weight"`
 	Headers  map[string]string `yaml:"headers"`
+	Timeout  time.Duration     `yaml:"timeout"`
 }
 
 type ServerConfig struct {
